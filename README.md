@@ -210,8 +210,8 @@ The image binds to `0.0.0.0`, exposes port `8000`, runs as non-root UID/GID `100
 Public fallback image:
 
 ```bash
-docker pull ghcr.io/xgnoir95/gridlock-d:v1.0.1
-docker run --rm -p 8000:8000 --env-file .env ghcr.io/xgnoir95/gridlock-d:v1.0.1
+docker pull ghcr.io/xgnoir95/gridlock-d:v1.0.2
+docker run --rm -p 8000:8000 --env-file .env ghcr.io/xgnoir95/gridlock-d:v1.0.2
 curl http://127.0.0.1:8000/health
 # {"status":"ok"}
 ```
@@ -219,10 +219,10 @@ curl http://127.0.0.1:8000/health
 Immutable image reference:
 
 ```text
-ghcr.io/xgnoir95/gridlock-d@sha256:9a8692c53eed4a54f2e5a8cc743ac059c2a93d62421e95d7e87f9df9855d9fdb
+ghcr.io/xgnoir95/gridlock-d@sha256:de5fa62f5c4dcee5f5a3be84843aa9b2052f3ad791fb830c69742a4b1b3e2a14
 ```
 
-The public `v1.0.1` image was independently pulled from GHCR, started as a fresh container, and verified through `GET /health`. The immutable digest above is the preferred submission reference.
+The public `v1.0.2` image was independently pulled from GHCR, started as a fresh container, and verified through `GET /health`. The immutable digest above is the preferred submission reference.
 
 ## CI/CD and failure behavior
 
