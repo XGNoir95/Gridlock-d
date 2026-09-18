@@ -1,16 +1,14 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
 WORKDIR /build
-COPY requirements.lock pyproject.toml README.md ./
-RUN python -m pip wheel --wheel-dir /wheels -r requirements.lock
-COPY app ./app
-RUN python -m pip wheel --no-deps --wheel-dir /wheels .
+COPY requirements.lock ./
+RUN python -m pip wheel --require-hashes --wheel-dir /wheels -r requirements.lock
 
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -23,6 +21,7 @@ WORKDIR /app
 COPY --from=builder /wheels /wheels
 RUN python -m pip install --no-cache-dir /wheels/* \
     && rm -rf /wheels
+COPY --chown=10001:10001 app ./app
 
 USER 10001:10001
 EXPOSE 8000

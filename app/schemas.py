@@ -11,6 +11,9 @@ class StrictModel(BaseModel):
 
 NonNegative = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 HourNumber = Annotated[StrictInt, Field(ge=0, le=23)]
+ScenarioId = Annotated[str, Field(min_length=1, max_length=1024)]
+OperatorNote = Annotated[str, Field(min_length=1, max_length=16384)]
+Explanation = Annotated[str, Field(min_length=1, max_length=1024)]
 
 
 class HourInput(StrictModel):
@@ -37,8 +40,8 @@ class BatteryInput(StrictModel):
 
 
 class OptimizeRequest(StrictModel):
-    scenario_id: str
-    operator_notes: Annotated[list[str], Field(min_length=1, max_length=3)]
+    scenario_id: ScenarioId
+    operator_notes: Annotated[list[OperatorNote], Field(min_length=1, max_length=3)]
     hours: Annotated[list[HourInput], Field(min_length=24, max_length=24)]
     battery: BatteryInput
 
@@ -99,7 +102,7 @@ class DirectiveInterpretation(StrictModel):
     applies: bool
     directive_type: DirectiveType
     structured_adjustment: Adjustment | None
-    explanation: str
+    explanation: Explanation
 
     @field_validator("explanation")
     @classmethod

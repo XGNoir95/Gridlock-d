@@ -15,30 +15,31 @@ POST /optimize-energy
 
 ```mermaid
 flowchart TD
-    A["POST /optimize-energy"] --> B["Strict Pydantic request validation"]
-    B --> C["Gemini primary attempt<br/>8-key round-robin pool"]
+    A["POST /optimize-energy"] --> B["Bounded body, queue, and concurrency"]
+    B --> C["Strict Pydantic request validation"]
+    C --> D["Gemini primary attempt<br/>8-key round-robin pool"]
 
-    C -->|Structured candidate| D{"Common schema +<br/>deterministic guardrails"}
-    C -->|Malformed structured output| E["One Gemini repair attempt"]
-    C -->|Provider or transport failure| F["Groq backup attempt<br/>12-key round-robin pool"]
+    D -->|Structured candidate| E{"Common schema +<br/>deterministic guardrails"}
+    D -->|Malformed structured output| F["One Gemini repair attempt"]
+    D -->|Provider or transport failure| G["Groq backup attempt<br/>12-key round-robin pool"]
 
-    D -->|Valid| G["Per-hour directive compiler"]
-    D -->|Invalid| E
-    E --> H{"Same schema +<br/>guardrail revalidation"}
-    F --> I{"Same schema +<br/>guardrail validation"}
-    H -->|Valid| G
-    I -->|Valid| G
-    H -->|Invalid| X["Controlled HTTP 500"]
-    I -->|Invalid| X
+    E -->|Valid| H["Per-hour directive compiler"]
+    E -->|Invalid| F
+    F --> I{"Same schema +<br/>guardrail revalidation"}
+    G --> J{"Same schema +<br/>guardrail validation"}
+    I -->|Valid| H
+    J -->|Valid| H
+    I -->|Invalid| X["Controlled HTTP 500"]
+    J -->|Invalid| X
 
-    G --> J["SciPy / HiGHS linear program"]
-    J --> K["Serialize 24-hour plan"]
-    K --> L{"Independent deterministic replay"}
-    L -->|Valid| M["Exact JSON response"]
-    L -->|Invalid| X
+    H --> K["SciPy / HiGHS linear program"]
+    K --> L["Serialize 24-hour plan"]
+    L --> M{"Independent deterministic replay"}
+    M -->|Valid| N["Exact JSON response"]
+    M -->|Invalid| X
 ```
 
-Gemini is the normal path. Groq is called only after a Gemini provider/transport failure; it is not called after Gemini succeeds. A malformed Gemini result or a Gemini guardrail failure receives at most one Gemini repair attempt. Therefore, every request makes at most two model calls.
+Gemini is the normal path. Groq is called only after a Gemini provider/transport failure; it is not called after Gemini succeeds. A malformed Gemini result or a Gemini guardrail failure receives at most one Gemini repair attempt. Therefore, every request makes at most two model calls. The complete queue-to-response path has a 29-second deadline, preserving margin below the official 30-second timeout.
 
 ### Responsibility boundaries
 
@@ -81,8 +82,7 @@ Requirements: Python 3.11 or 3.12, internet access, and at least one Gemini API 
 git clone https://github.com/XGNoir95/Gridlock-d.git
 cd Gridlock-d
 py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.lock
-.venv\Scripts\python.exe -m pip install --no-deps -e .
+.venv\Scripts\python.exe -m pip install --require-hashes -r requirements.lock
 copy .env.example .env
 ```
 
@@ -105,8 +105,7 @@ curl -X POST http://127.0.0.1:8000/optimize-energy -H "Content-Type: application
 git clone https://github.com/XGNoir95/Gridlock-d.git
 cd Gridlock-d
 python3.12 -m venv .venv
-.venv/bin/python -m pip install -r requirements.lock
-.venv/bin/python -m pip install --no-deps -e .
+.venv/bin/python -m pip install --require-hashes -r requirements.lock
 cp .env.example .env
 # Set GEMINI_MODEL and GEMINI_API_KEY_1 in .env.
 .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
@@ -128,6 +127,10 @@ The production model configuration, independently qualified before deployment, i
 | `LLM_TIMEOUT_SECONDS` | Optional; default `4` | Timeout for one provider attempt |
 | `LLM_HARD_REQUEST_DEADLINE_SECONDS` | Optional; default `9`, max `29` | Total model-stage deadline |
 | `LLM_KEY_COOLDOWN_SECONDS` | Optional; default `60` | Cooldown after auth/rate rejection |
+| `TOTAL_REQUEST_DEADLINE_SECONDS` | Optional; default/max `29` | Queue-to-response deadline, below the official 30-second limit |
+| `MAX_REQUEST_BODY_BYTES` | Optional; default `262144` | Reject oversized bodies before JSON parsing or model use |
+| `MAX_CONCURRENT_OPTIMIZATIONS` | Optional; default `16` | Maximum active optimization requests per process |
+| `MAX_QUEUED_OPTIMIZATIONS` | Optional; default `64` | Maximum waiting optimization requests per process |
 | `PORT` | Optional; default `8000` | HTTP port |
 
 The normal path uses one Gemini call. A Gemini schema/guardrail failure permits one Gemini repair. A Gemini provider failure permits one Groq backup call. Every request is capped at two model calls.
@@ -138,23 +141,23 @@ Install development dependencies before running local checks:
 
 ```cmd
 REM Windows Command Prompt
-.venv\Scripts\python.exe -m pip install -r requirements-dev.lock
-.venv\Scripts\python.exe -m pip install --no-deps -e .
+.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.lock
 .venv\Scripts\python.exe -m ruff check .
 .venv\Scripts\python.exe -m pytest
 .venv\Scripts\python.exe -m pip check
+.venv\Scripts\python.exe -m pip_audit --strict -r requirements.lock
 ```
 
 ```bash
 # Linux/macOS
-.venv/bin/python -m pip install -r requirements-dev.lock
-.venv/bin/python -m pip install --no-deps -e .
+.venv/bin/python -m pip install --require-hashes -r requirements-dev.lock
 .venv/bin/python -m ruff check .
 .venv/bin/python -m pytest
 .venv/bin/python -m pip check
+.venv/bin/python -m pip_audit --strict -r requirements.lock
 ```
 
-Current deterministic result: **50 tests passed**, lint passed, and dependency integrity passed.
+Current deterministic result: **57 tests passed**, lint passed, dependency integrity passed, and the runtime dependency audit found no known vulnerabilities.
 
 ### Official public samples
 
@@ -223,8 +226,9 @@ The public `v1.0.1` image was independently pulled from GHCR, started as a fresh
 
 ## CI/CD and failure behavior
 
-- CI runs Ruff, pytest, a Docker build, and a container health smoke test on every push and pull request.
+- CI runs Ruff, pytest, a runtime dependency vulnerability audit, a Docker build, and a container health smoke test on every push and pull request.
 - Tagged releases run the same verification and publish a Linux/AMD64 image with provenance and an SBOM.
+- CI actions, the Docker base image, and Python dependencies are immutable-pinned; dependency installation verifies package hashes.
 - Malformed or structurally invalid requests return HTTP `400`.
 - Model, guardrail, solver, or replay failures return a controlled HTTP `500` without raw stack traces, prompts, provider bodies, or secrets.
 - FastAPI documentation routes are disabled; the public surface contains only the two official endpoints.
@@ -232,8 +236,11 @@ The public `v1.0.1` image was independently pulled from GHCR, started as a fresh
 ## Security and limitations
 
 - Secrets are read only from environment variables. `.env` is excluded from Git and Docker build context.
-- The service accepts only the bounded official shape: 1–3 notes and exactly 24 unique hours.
+- The service accepts only the bounded official shape: 1–3 notes, exactly 24 unique hours, a 1,024-character scenario ID, and at most 16,384 characters per note. Bodies over 256 KiB are rejected before model use.
+- Active and queued optimization work is bounded while `/health` remains independent, and the full optimization path is capped at 29 seconds.
+- Provider HTTP clients are closed during application shutdown; API responses are non-cacheable and include defensive content-type/referrer headers.
 - Availability depends on hosted-model credentials, quota, rate limits, network access, and deployment uptime.
+- Like every probabilistic language-model system, unseen phrasing can still be misinterpreted; strict structured output, deterministic guardrails, controlled repair/fallback, qualification cases, and final replay limit its impact without replacing the required LLM with hard-coded rules.
 - Groq backup requires both a model identifier and at least one Groq key; otherwise it remains disabled.
 - Contradictory overlapping solar-reduction factors are rejected because the official specification does not define their composition. Official scoring scenarios are guaranteed not to require contradictory hard directives.
 

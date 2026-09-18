@@ -41,3 +41,18 @@ def test_request_rejects_unknown_fields_and_non_finite_numbers() -> None:
     payload["hours"][0]["demand_kwh"] = float("nan")
     with pytest.raises(ValidationError):
         OptimizeRequest.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("scenario_id", "x" * 1025),
+        ("operator_notes", ["x" * 16385]),
+    ],
+)
+def test_request_rejects_unreasonably_large_strings(field: str, value: object) -> None:
+    payload = valid_request_payload()
+    payload[field] = value
+
+    with pytest.raises(ValidationError):
+        OptimizeRequest.model_validate(payload)

@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=4.0, gt=0)
     llm_hard_request_deadline_seconds: float = Field(default=9.0, gt=0, le=29)
     llm_key_cooldown_seconds: float = Field(default=60.0, ge=0)
+    total_request_deadline_seconds: float = Field(default=29.0, gt=2.5, le=29)
+    max_request_body_bytes: int = Field(default=262_144, ge=16_384, le=1_048_576)
+    max_concurrent_optimizations: int = Field(default=16, ge=1, le=128)
+    max_queued_optimizations: int = Field(default=64, ge=0, le=1024)
     port: int = 8000
     log_level: str = "INFO"
 

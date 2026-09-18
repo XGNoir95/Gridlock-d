@@ -25,12 +25,29 @@ class Planner:
         backup: InterpretationProvider | None = None,
         *,
         hard_deadline_seconds: float = 9.0,
+        total_deadline_seconds: float = 29.0,
+        optimizer_reserve_seconds: float = 2.5,
         minimum_second_attempt_seconds: float = 0.25,
     ) -> None:
+        if total_deadline_seconds <= optimizer_reserve_seconds:
+            raise ValueError("total deadline must reserve time for deterministic planning")
         self._primary = primary
         self._backup = backup
         self._hard_deadline_seconds = hard_deadline_seconds
+        self._total_deadline_seconds = total_deadline_seconds
+        self._optimizer_reserve_seconds = optimizer_reserve_seconds
         self._minimum_second_attempt_seconds = minimum_second_attempt_seconds
+
+    async def aclose(self) -> None:
+        """Close each provider adapter once when it exposes an async close hook."""
+        closed: set[int] = set()
+        for provider in (self._primary, self._backup):
+            if provider is None or id(provider) in closed:
+                continue
+            closed.add(id(provider))
+            close = getattr(provider, "aclose", None)
+            if close is not None:
+                await close()
 
     async def _invoke(
         self,
@@ -103,8 +120,12 @@ class Planner:
             except (GuardrailError, ModelOutputError, ProviderError, PlanningError) as exc:
                 raise PlanningError("model interpretation repair failed") from exc
 
-    async def plan(self, request: OptimizeRequest) -> OptimizeResponse:
-        deadline = time.monotonic() + self._hard_deadline_seconds
+    async def _plan_within_deadline(self, request: OptimizeRequest) -> OptimizeResponse:
+        model_budget = min(
+            self._hard_deadline_seconds,
+            self._total_deadline_seconds - self._optimizer_reserve_seconds,
+        )
+        deadline = time.monotonic() + model_budget
         directives = await self._interpret(request, deadline)
         try:
             compiled = compile_directives(request, directives)
@@ -119,3 +140,11 @@ class Planner:
             ValueError,
         ) as exc:
             raise PlanningError("planning pipeline failed") from exc
+
+    async def plan(self, request: OptimizeRequest) -> OptimizeResponse:
+        """Run the complete request path under one absolute wall-clock deadline."""
+        try:
+            async with asyncio.timeout(self._total_deadline_seconds):
+                return await self._plan_within_deadline(request)
+        except TimeoutError as exc:
+            raise PlanningError("planning request exceeded its deadline") from exc

@@ -208,7 +208,13 @@ class _HTTPProvider:
         self._pool = pool
         self._model = model
         self._timeout = timeout_seconds
+        self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
+
+    async def aclose(self) -> None:
+        """Close the provider-owned connection pool during application shutdown."""
+        if self._owns_client:
+            await self._client.aclose()
 
     async def _post(
         self,
