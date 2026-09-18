@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+tests
+dist
+build
+*.egg-info
+BUP_CSE_FEST_2026_Participant_Docs
