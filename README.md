@@ -13,29 +13,36 @@ POST /optimize-energy
 
 ## Architecture
 
-```text
-Strict request schema
-        ↓
-Gemini primary (round-robin credential pool)
-        │ provider failure only
-        └────────────────────────→ Groq backup
-                                      ↓
-                         Common structured schema
-                                      ↓
-                    Deterministic semantic guardrails
-                                      ↓
-                     Per-hour directive compilation
-                                      ↓
-                        SciPy/HiGHS linear program
-                                      ↓
-                     Independent 24-hour plan replay
-                                      ↓
-                           Exact JSON response
+```mermaid
+flowchart TD
+    A["POST /optimize-energy"] --> B["Strict Pydantic request validation"]
+    B --> C["Gemini primary attempt<br/>8-key round-robin pool"]
+
+    C -->|Structured candidate| D{"Common schema +<br/>deterministic guardrails"}
+    C -->|Malformed structured output| E["One Gemini repair attempt"]
+    C -->|Provider or transport failure| F["Groq backup attempt<br/>12-key round-robin pool"]
+
+    D -->|Valid| G["Per-hour directive compiler"]
+    D -->|Invalid| E
+    E --> H{"Same schema +<br/>guardrail revalidation"}
+    F --> I{"Same schema +<br/>guardrail validation"}
+    H -->|Valid| G
+    I -->|Valid| G
+    H -->|Invalid| X["Controlled HTTP 500"]
+    I -->|Invalid| X
+
+    G --> J["SciPy / HiGHS linear program"]
+    J --> K["Serialize 24-hour plan"]
+    K --> L{"Independent deterministic replay"}
+    L -->|Valid| M["Exact JSON response"]
+    L -->|Invalid| X
 ```
+
+Gemini is the normal path. Groq is called only after a Gemini provider/transport failure; it is not called after Gemini succeeds. A malformed Gemini result or a Gemini guardrail failure receives at most one Gemini repair attempt. Therefore, every request makes at most two model calls.
 
 ### Responsibility boundaries
 
-- **LLM:** interprets note meaning into one of the six official directive types. Its validated output directly creates optimizer constraints; it is not used for scheduling arithmetic.
+- **LLM:** interprets all 1–3 notes in one structured request and maps each note to one of the six official types: `solar_reduction`, `minimum_battery_reserve`, `no_charge_window`, `no_discharge_window`, `max_grid_window`, or `no_op`. Its validated output directly creates optimizer constraints; it is not used for scheduling arithmetic.
 - **Guardrails:** verify note coverage/order, directive shape, `applies`/`no_op` semantics, whole-hour windows, numeric meaning, bounds, and battery-capacity-relative reserves.
 - **Directive compiler:** converts the validated interpretation into effective solar, active reserve, charge/discharge availability, and grid-cap arrays.
 - **Optimizer:** uses a signed battery-flow linear program to minimize total grid cost while enforcing energy balance, battery limits, directives, and end-of-day neutrality.
@@ -44,6 +51,8 @@ Gemini primary (round-robin credential pool)
 No phrase-matching rule replaces the language model, and invalid model output is never silently converted into a directive.
 
 ## Production API
+
+The judge-facing API requires no authentication, login, dashboard, VPN, or manual approval.
 
 Health:
 
@@ -105,7 +114,7 @@ cp .env.example .env
 
 ## Configuration
 
-The deployed and qualified models are:
+The production model configuration, independently qualified before deployment, is:
 
 - Primary: `gemini-3.5-flash-lite`
 - Backup: `openai/gpt-oss-120b` through Groq
@@ -120,7 +129,6 @@ The deployed and qualified models are:
 | `LLM_HARD_REQUEST_DEADLINE_SECONDS` | Optional; default `9`, max `29` | Total model-stage deadline |
 | `LLM_KEY_COOLDOWN_SECONDS` | Optional; default `60` | Cooldown after auth/rate rejection |
 | `PORT` | Optional; default `8000` | HTTP port |
-| `LOG_LEVEL` | Optional; default `INFO` | Application log level |
 
 The normal path uses one Gemini call. A Gemini schema/guardrail failure permits one Gemini repair. A Gemini provider failure permits one Groq backup call. Every request is capped at two model calls.
 
@@ -128,12 +136,22 @@ The normal path uses one Gemini call. A Gemini schema/guardrail failure permits 
 
 Install development dependencies before running local checks:
 
+```cmd
+REM Windows Command Prompt
+.venv\Scripts\python.exe -m pip install -r requirements-dev.lock
+.venv\Scripts\python.exe -m pip install --no-deps -e .
+.venv\Scripts\python.exe -m ruff check .
+.venv\Scripts\python.exe -m pytest
+.venv\Scripts\python.exe -m pip check
+```
+
 ```bash
-python -m pip install -r requirements-dev.lock
-python -m pip install --no-deps -e .
-python -m ruff check .
-python -m pytest
-python -m pip check
+# Linux/macOS
+.venv/bin/python -m pip install -r requirements-dev.lock
+.venv/bin/python -m pip install --no-deps -e .
+.venv/bin/python -m ruff check .
+.venv/bin/python -m pytest
+.venv/bin/python -m pip check
 ```
 
 Current deterministic result: **50 tests passed**, lint passed, and dependency integrity passed.
@@ -143,30 +161,34 @@ Current deterministic result: **50 tests passed**, lint passed, and dependency i
 With the service running and the organizer JSON beside the repository:
 
 ```bash
-python scripts/run_public_samples.py \
+.venv/bin/python scripts/run_public_samples.py \
   ../BUP_CSE_FEST_2026_Participant_Docs/BUP_CSE_FEST_2026_Preli_Public_Sample_Cases.json
 ```
 
 To verify the deployed API instead:
 
 ```bash
-python scripts/run_public_samples.py \
+.venv/bin/python scripts/run_public_samples.py \
   ../BUP_CSE_FEST_2026_Participant_Docs/BUP_CSE_FEST_2026_Preli_Public_Sample_Cases.json \
   --base-url https://gridlock-d.onrender.com
 ```
+
+On Windows Command Prompt, replace `.venv/bin/python` in the two commands above with `.venv\Scripts\python.exe`.
 
 Expected result: `SAMPLE-01: pass` through `SAMPLE-10: pass`. The runner checks official directive semantics, independently replays every schedule against organizer ground truth, and compares the optimum cost within the official `0.01` tolerance. All ten samples have passed against the public deployment.
 
 ### Live model qualification
 
 ```bash
-python scripts/qualify_llm_providers.py --provider gemini --passes 3 --delay-seconds 1.5
-python scripts/qualify_llm_providers.py --provider groq --passes 3 --delay-seconds 0.5
+.venv/bin/python scripts/qualify_llm_providers.py --provider gemini --passes 3 --delay-seconds 1.5
+.venv/bin/python scripts/qualify_llm_providers.py --provider groq --passes 3 --delay-seconds 0.5
 ```
+
+On Windows Command Prompt, replace `.venv/bin/python` with `.venv\Scripts\python.exe`.
 
 Each provider is tested independently across the ten official interpretations plus ten adversarial/paraphrase cases. Current results:
 
-| Provider | Model | Result | Median model latency | Maximum model latency |
+| Provider | Model | Result | Median qualification latency | Maximum qualification latency |
 |---|---|---:|---:|---:|
 | Gemini | `gemini-3.5-flash-lite` | 60/60 | 1.405 s | 2.226 s |
 | Groq | `openai/gpt-oss-120b` | 60/60 | 1.855 s | 4.812 s |
@@ -182,7 +204,22 @@ docker run --rm -p 8000:8000 --env-file .env gridlock-d:local
 
 The image binds to `0.0.0.0`, exposes port `8000`, runs as non-root UID/GID `10001`, includes a health check, and does not copy `.env` or test/development files.
 
-The release workflow is configured to publish `ghcr.io/xgnoir95/gridlock-d:<version>`. The exact public pull command will be added here after the registry artifact has been published and independently pulled successfully.
+Public fallback image:
+
+```bash
+docker pull ghcr.io/xgnoir95/gridlock-d:v1.0.1
+docker run --rm -p 8000:8000 --env-file .env ghcr.io/xgnoir95/gridlock-d:v1.0.1
+curl http://127.0.0.1:8000/health
+# {"status":"ok"}
+```
+
+Immutable image reference:
+
+```text
+ghcr.io/xgnoir95/gridlock-d@sha256:9a8692c53eed4a54f2e5a8cc743ac059c2a93d62421e95d7e87f9df9855d9fdb
+```
+
+The public `v1.0.1` image was independently pulled from GHCR, started as a fresh container, and verified through `GET /health`. The immutable digest above is the preferred submission reference.
 
 ## CI/CD and failure behavior
 
